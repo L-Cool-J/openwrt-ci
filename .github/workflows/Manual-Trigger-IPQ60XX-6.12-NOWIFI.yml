@@ -1,0 +1,11 @@
+name: Manual Trigger IPQ60XX-6.12-NOWIFI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    uses: L-Cool-J/openwrt-ci/.github/workflows/IPQ60XX-6.12-NOWIFI.yml@main
+    permissions:
+      contents: write
+    secrets: inherit

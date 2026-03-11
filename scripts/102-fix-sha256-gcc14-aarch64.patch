@@ -1,0 +1,73 @@
+Fix GCC 14 always_inline memset inlining failure in mbedtls_sha256_init.
+
+When MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT is enabled (the default for
+aarch64 in OpenWrt), sha256.c emits "#pragma GCC push_options" and
+"#pragma GCC target(arch=armv8-a+crypto)" to enable ARMv8 SHA2 intrinsics.
+This pragma becomes active before the capability-detection helper functions
+and stays active through mbedtls_sha256_init() and mbedtls_sha256_free().
+
+GCC 14 introduced stricter always_inline checking: it refuses to inline an
+always_inline callee (memset from _FORTIFY_SOURCE) when the caller's target
+attributes differ from the definition's target attributes. Because
+mbedtls_sha256_init() lives inside the +crypto pragma scope but its
+always_inline memset was compiled for the plain cortex-a53 target, GCC 14
+emits: "error: inlining failed in call to always_inline 'memset': target
+specific option mismatch".
+
+Fix: restore default compiler target options right after the capability-
+detection block ends and before init/free/starts functions, then re-apply
+the +crypto options just before the hardware-accelerated process functions.
+This creates two tightly scoped +crypto regions (one for detection helpers,
+one for hardware process functions) while leaving init/free/starts with the
+default target, allowing always_inline memset to be inlined correctly.
+
+--- a/library/sha256.c
++++ b/library/sha256.c
+@@ -217,6 +217,18 @@
+ 
+ #endif  /* MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT */
+ 
++/* GCC 14 fix: restore default target options after capability-detection
++ * functions so that init/free/starts can call always_inline builtins
++ * (e.g. memset from _FORTIFY_SOURCE) without "target specific option mismatch". */
++#if defined(MBEDTLS_POP_TARGET_PRAGMA)
++#if defined(__clang__)
++#pragma clang attribute pop
++#elif defined(__GNUC__)
++#pragma GCC pop_options
++#endif
++#undef MBEDTLS_POP_TARGET_PRAGMA
++#endif
++
+ #if !defined(MBEDTLS_SHA256_ALT)
+ 
+ #define SHA256_BLOCK_SIZE 64
+@@ -317,6 +329,28 @@
+ 
+ #endif
+ 
++/* Re-apply hardware crypto target for ARMv8-A SHA2 intrinsic functions.
++ * Mirrors the original push_options block but scoped only to the hardware-
++ * accelerated process functions so that init/free/starts are unaffected. */
++#if defined(MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT) || \
++    defined(MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_ONLY)
++/* *INDENT-OFF* */
++#  if !defined(__ARM_FEATURE_CRYPTO) || defined(MBEDTLS_ENABLE_ARM_CRYPTO_EXTENSIONS_COMPILER_FLAG)
++#    if defined(__ARMCOMPILER_VERSION) && __ARMCOMPILER_VERSION > 6090000
++#      pragma clang attribute push (__attribute__((target("sha2"))), apply_to=function)
++#      define MBEDTLS_POP_TARGET_PRAGMA
++#    elif defined(__clang__) && __clang_major__ >= 4
++#      pragma clang attribute push (__attribute__((target("crypto"))), apply_to=function)
++#      define MBEDTLS_POP_TARGET_PRAGMA
++#    elif defined(__GNUC__) && __GNUC__ >= 6
++#      pragma GCC push_options
++#      pragma GCC target ("arch=armv8-a+crypto")
++#      define MBEDTLS_POP_TARGET_PRAGMA
++#    endif
++#  endif
++/* *INDENT-ON* */
++#endif
++
+ #if defined(MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_IF_PRESENT) || \
+     defined(MBEDTLS_SHA256_USE_ARMV8_A_CRYPTO_ONLY)
+ 

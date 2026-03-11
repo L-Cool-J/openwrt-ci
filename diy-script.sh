@@ -105,6 +105,14 @@ sed -i "s/${orig_version}/R${date_version} by Haiibo/g" package/lean/default-set
 # 修复 hostapd 报错
 cp -f $GITHUB_WORKSPACE/scripts/011-fix-mbo-modules-build.patch package/network/services/hostapd/patches/011-fix-mbo-modules-build.patch
 
+# 修复 mbedtls 在 GCC 14 aarch64 上的编译错误
+# #pragma GCC target 的作用域覆盖了 mbedtls_sha256_init/free 函数，导致
+# GCC 14 拒绝内联 always_inline memset（来自 _FORTIFY_SOURCE），报错：
+# "inlining failed in call to always_inline 'memset': target specific option mismatch"
+mkdir -p package/libs/mbedtls/patches
+cp -f $GITHUB_WORKSPACE/scripts/102-fix-sha256-gcc14-aarch64.patch \
+    package/libs/mbedtls/patches/102-fix-sha256-gcc14-aarch64.patch
+
 # 修复 armv8 设备 xfsprogs 报错
 sed -i 's/TARGET_CFLAGS.*/TARGET_CFLAGS += -DHAVE_MAP_SYNC -D_LARGEFILE64_SOURCE/g' feeds/packages/utils/xfsprogs/Makefile
 
